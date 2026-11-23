@@ -63,7 +63,7 @@ Each finding follows: observation, hypothesis, next step.
 ## Project Structure
 
 ```
-involved-media-demo/
+full_funnel_strategy_demo/
 ├── KAG_conversion_data.csv    # Raw data
 ├── requirements.txt           # Python dependencies
 ├── data/
