@@ -72,8 +72,8 @@ involved-media-demo/
 │   └── funnel_metrics.sql     # Funnel analysis queries
 ├── load_data.py               # Loads CSV into SQLite database
 ├── qa_check.py                # Automated QA script
-├── powerbi/
-│   └── dashboard_screenshot.pdf
+├── export_for_powerbi.py      # Exports CSVs for Power BI
+├── powerbi.pdf                # Power BI dashboard screenshot
 └── README.md
 ```
 
@@ -140,7 +140,7 @@ Four things I check first on any full-funnel setup:
 
 The allocation is the inverse of what Meta recommends for a mature funnel. Almost all budget is at the top, almost nothing at the bottom. This is not automatically wrong. A new product needs to build its audience before retargeting makes sense. But the gap between MOFU (4.9%) and BOFU (0.3%) means the people Consideration warms up have almost nowhere to go.
 
-**Next step:** Define a scaling trigger for Conversion budget. Once Consideration has accumulated a custom audience of sufficient size, begin increasing BOFU spend incrementally and monitor CPA against the current $2.58 benchmark.
+**Next step:** Define a scaling trigger for Conversion budget. Once Consideration has accumulated a custom audience of sufficient size, begin increasing BOFU spend incrementally and monitor CPA against the current $6.24 benchmark.
 
 ---
 
