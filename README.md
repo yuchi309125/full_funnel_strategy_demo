@@ -1,0 +1,234 @@
+# Facebook Ads Full Funnel Analysis
+
+**Involved Media Data Science Associate | Portfolio Demo**
+
+---
+
+## Data Description
+
+**Source:** Facebook Ads campaign data (publicly available on Kaggle)
+
+**Size:** 1,143 rows, no missing values
+
+**Granularity:** Each row represents one ad's performance broken down by a single audience segment (age × gender × interest combination).
+
+| Field | Description |
+|-------|-------------|
+| `ad_id` | Unique ad identifier |
+| `xyz_campaign_id` | Internal campaign ID (3 campaigns in total) |
+| `fb_campaign_id` | Facebook's campaign ID (691 unique values) |
+| `age` | Age group: 30–34, 35–39, 40–44, 45–49 |
+| `gender` | M / F |
+| `interest` | Facebook interest category code (2–114) |
+| `Impressions` | Number of times the ad was shown |
+| `Clicks` | Number of clicks on the ad |
+| `Spent` | Ad spend in USD |
+| `Total_Conversion` | Number of people who enquired about the product after seeing the ad |
+| `Approved_Conversion` | Number of people who bought the product after seeing the ad |
+
+**Total spend:** $58,705 · **Total impressions:** 213M · **Total clicks:** 38,165 · **Approved conversions:** 1,079
+
+**What's missing:** No date dimension, no campaign objective labels. Time-series analysis and pacing are not possible with this dataset.
+
+The 3 campaigns show clearly distinct behavior in spend scale, CTR, and conversion rates. I'm treating them as three funnel stages, though this is inferred from the numbers, not confirmed by the data.
+
+| Campaign | Inferred Stage | Impressions | Spend | CPA |
+|----------|---------------|-------------|-------|-----|
+| 1178 | Awareness | 204M | $55,662 (94.8%) | $63.83 |
+| 936 | Consideration | 8.1M | $2,893 (4.9%) | $15.81 |
+| 916 | Conversion | 483K | $150 (0.3%) | $6.24 |
+
+---
+
+## Project Goal
+
+The question I'm trying to answer is not whether the campaigns performed well, but whether the funnel structure is set up to work. Without knowing the product, the brand stage, or the campaign briefs, I can't tell anyone their strategy is right or wrong. What I can do is flag where the numbers don't add up and suggest what to test next.
+
+Each finding follows: observation, hypothesis, next step.
+
+---
+
+## Key Assumptions
+
+**1. Campaign objectives are inferred.** The dataset has no objective field. I assigned funnel stages based on spend scale, CPM, CTR, and conversion rate. Should be validated against the actual campaign setup before acting on any finding.
+
+**2. This looks like a new product or early-stage scenario.** $150 in Conversion budget is not a rounding error, it's almost nothing. That either means the warm audience pool is too small to retarget yet, or the conversion infrastructure hasn't been built. I'm treating it as an open question rather than a mistake.
+
+**3. Conversion metric definitions are from the dataset, but attribution settings are unknown.** Per Kaggle: `Total_Conversion` = enquiries after seeing the ad, `Approved_Conversion` = purchases after seeing the ad. Some segments show `Total_Conversion > Clicks`, which is not a data error. It happens when Facebook attributes conversions from people who saw the ad but never clicked, through view-through attribution, cross-device tracking, or multi-touch credit. The exact reason requires checking the attribution window in Ads Manager. What's also unknown is what user action each campaign defined as an "enquiry," which may differ across all three.
+
+**4. No causal claims.** This is observational data. The findings are hypotheses, not conclusions.
+
+---
+
+## Project Structure
+
+```
+involved-media-demo/
+├── KAG_conversion_data.csv    # Raw data
+├── data/
+│   └── flagged/               # QA check output
+├── sql/
+│   ├── schema.sql             # Table definitions
+│   └── funnel_metrics.sql     # Funnel analysis queries
+├── load_data.py               # Loads CSV into SQLite database
+├── qa_check.py                # Automated QA script
+├── powerbi/
+│   └── dashboard_screenshot.pdf
+└── README.md
+```
+
+---
+
+## 1. Data Quality Check
+
+```bash
+python qa_check.py --input KAG_conversion_data.csv --output data/flagged/
+```
+
+Before any analysis I run a QA script to catch issues that would silently corrupt the numbers. The checks fall into three categories.
+
+**Funnel logic.** Each metric has a prerequisite: clicks require impressions, conversions require exposure. Hard violations like `Clicks > Impressions` or `Approved > Total` are physically impossible and get excluded. Soft violations like `Total_Conversion > Clicks` get flagged for investigation because they can be legitimate attribution behavior depending on the platform setup.
+
+**Spend logic.** `Spend > 0 with Impressions = 0` means budget was consumed with nothing to show for it. `Clicks > 0 with Spent = 0` means activity was recorded with no cost attached. Both are worth investigating before trusting the efficiency metrics.
+
+**Data integrity.** Negative values, missing fields, duplicate ad IDs.
+
+**Result:** 290 rows flagged (25.4%), all soft violations. `Total_Conversion > Clicks` in 218 rows, `Approved_Conversion > Clicks` in 72 rows. No hard violations. These rows are kept in the analysis with the attribution caveat noted above.
+
+---
+
+## 2. Database Schema
+
+The raw CSV is a single flat file. `load_data.py` splits it into four tables in a SQLite database:
+
+```
+clients         one row per advertiser
+campaigns       one row per campaign, linked to clients
+ad_performance  one row per ad per audience segment, linked to campaigns
+flagged_rows    QA output, linked to ad_performance
+```
+
+The multi-table structure means the same schema can hold multiple clients' data, not just this one dataset. `funnel_metrics.sql` runs cross-table queries using JOINs, CTEs, window functions, and HAVING to pull the analysis in Section 3.
+
+---
+
+## 3. Full Funnel Analysis
+
+At Tagtoo I worked on campaigns with budgets over $50K/month. When something broke, it was rarely a creative problem. It was usually structural: money in the wrong place, reaching the wrong people, or a mid-funnel nobody was watching.
+
+Four things I check first on any full-funnel setup:
+
+**Budget distribution across stages.** All three stages need to be funded. Meta's reference split for a mature funnel is roughly 20 to 30% TOFU, 20 to 30% MOFU, 40 to 50% BOFU. This dataset shows 94.8% in Awareness and 0.3% in Conversion. That could make sense for a new product still building its audience, but it means almost nothing is being spent to close the people Consideration already warmed up.
+
+**Audience volume contraction.** Awareness at 204M impressions, Consideration at 8M, Conversion at 483K. The shape is structurally correct. The question is whether the right people are narrowing down, not just fewer people.
+
+**Alignment between who Awareness reaches and who actually buys.** At Tagtoo this was the most common trigger for a spend reallocation: a segment getting heavy TOFU investment that never showed up in conversion data. The budget share vs. conversion share analysis in Finding 1 checks exactly this.
+
+**Whether MOFU is actually funded.** 4.9% of budget in Consideration is thin. If MOFU is underfunded, BOFU ends up targeting people who are not ready. The CPA looks bad but the real problem is one stage up.
+
+---
+
+## 4. Findings and Next Steps
+
+### Check 1: Budget distribution
+
+| Stage | Actual | Meta Recommendation |
+|-------|--------|-------------------|
+| Awareness (TOFU) | **94.8%** | 20–30% |
+| Consideration (MOFU) | 4.9% | 20–30% |
+| Conversion (BOFU) | **0.3%** | 40–50% |
+
+The allocation is the inverse of what Meta recommends for a mature funnel. Almost all budget is at the top, almost nothing at the bottom. This is not automatically wrong. A new product needs to build its audience before retargeting makes sense. But the gap between MOFU (4.9%) and BOFU (0.3%) means the people Consideration warms up have almost nowhere to go.
+
+**Next step:** Define a scaling trigger for Conversion budget. Once Consideration has accumulated a custom audience of sufficient size, begin increasing BOFU spend incrementally and monitor CPA against the current $2.58 benchmark.
+
+---
+
+### Check 2: Audience volume contraction
+
+| Metric | Awareness | Consideration | Conversion |
+|--------|-----------|---------------|------------|
+| Impressions | 204,823,716 | 8,128,187 (4.0%) | 482,925 (0.24%) |
+| Clicks | 36,068 | 1,984 (5.5%) | 113 (0.31%) |
+| Approved conversions | 872 | 183 (21.0%) | 24 (2.75%) |
+
+The funnel shape is structurally correct: each stage is smaller than the one above it. What stands out is that Consideration retains 21% of Awareness's approved conversions despite having only 4.9% of the budget. That is unusually efficient and suggests Consideration is doing its job well relative to what it's given.
+
+**Next step:** No structural fix needed here. The contraction looks healthy. The question is whether the people narrowing down are the right ones, which is what Check 3 addresses.
+
+---
+
+### Check 3: Alignment between who Awareness reaches and who actually buys
+
+45–49 receives the largest share of Awareness budget but delivers the smallest share of approved conversions. 30–34 is the reverse.
+
+| Age | Awareness Budget Share | Approved Conversion Share | Gap |
+|-----|----------------------|--------------------------|-----|
+| 30–34 | 26.6% | **45.8%** | +19.2 |
+| 35–39 | 19.2% | 25.0% | +5.8 |
+| 40–44 | 20.0% | 16.7% | -3.3 |
+| 45–49 | **34.2%** | 12.5% | -21.7 |
+
+This is the clearest signal in the data. The segment getting the most Awareness spend is not the segment that buys.
+
+**Important caveat:** This dataset has no user-level tracking. The 45–49 people in the Awareness campaign and the 45–49 people who appear in Conversion data are not confirmed to be the same individuals. Without pixel tracking or custom audience data showing how users move across campaigns, the connection between Awareness spend and downstream conversions is an assumption, not a verified path. The gap is worth flagging, but the direction of causality cannot be confirmed from this data alone.
+
+**Hypothesis:** 30–34 has stronger product affinity. If the Awareness and Conversion audiences do overlap, reallocating budget toward 30–34 should improve downstream efficiency.
+
+**Next step:** Before acting on the budget shift, set up cross-campaign audience tracking to confirm whether Awareness exposure is actually feeding into Conversion. Once that link is confirmed, shift Awareness budget from 45–49 toward 30–34 and measure whether Conversion volume from that segment increases.
+
+---
+
+### Check 4: Whether MOFU is actually working
+
+| MOFU Metric | Value |
+|-------------|-------|
+| CTR | 0.024% |
+| Click to enquiry rate | 27.1% |
+| Approval rate | 34.1% |
+| CPA | $15.81 |
+
+CTR at 0.024% is low, which means most people who see the Consideration ad do not click. That is a signal worth investigating: either the targeting is too broad for a mid-funnel campaign, or the creative is not differentiated enough from Awareness. The click-to-enquiry rate at 27.1% is reasonable once someone does click. The drop is happening before the click, not after.
+
+**Hypothesis:** MOFU creative or targeting is not stage-appropriate. Mid-funnel ads should address a warmer, more informed audience than awareness ads, not just repurpose the same message.
+
+**Next step:** Review MOFU creative against the audience it is targeting. If the creative is identical to Awareness, that is likely the issue.
+
+---
+
+### Note on conversion event definitions
+
+290 rows show `Total_Conversion > Clicks`. This might be attribution behavior, instead of data errors. It does mean the specific action defined as an "enquiry" is unknown per campaign, and may differ across all three. Cross-campaign conversion rate comparisons should be treated as directional, not precise, until the event setup in Ads Manager is confirmed.
+
+---
+
+## 5. Power BI Dashboard
+
+Data source: 5 CSVs exported from `export_for_powerbi.py` loaded into Power BI via Get Data > Text/CSV.
+
+One-page report with 7 visuals:
+
+- **CPM / CPC cards**: Awareness CPM ($0.27) and Consideration CPC ($1.54)
+- **CPA table**: CPA per funnel stage side by side (Awareness $63.83 / Consideration $15.81 / Conversion $6.24)
+- **Donut chart**: Budget allocation across stages, showing the 94.8% / 4.9% / 0.3% split at a glance
+- **Funnel chart**: Impression volume across the three stages (204M → 8M → 483K), showing audience contraction
+- **Clustered bar chart**: Awareness budget share vs approved conversion share by age group, showing the 45–49 overspend and 30–34 underinvestment
+- **Bar chart**: Approval rate (purchases / enquiries) by age group
+- **Matrix with background color**: CPA by age × gender, color-scaled so high-cost segments stand out immediately
+
+---
+
+## Tech Stack
+
+- Python 3.x (pandas)
+- SQLite
+- Power BI
+
+---
+
+## If Given More Time
+
+- Add date dimension for pacing and trend analysis
+- Schedule QA via GitHub Actions on data refresh
+- Connect to Facebook Ads API for automated ingestion
+- Run incrementality testing to move from correlation to causal budget recommendations
